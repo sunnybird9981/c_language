@@ -1,0 +1,6 @@
+Quantum_Computer/
+libusb/
+login_log.txt/
+
+*.wav
+*.out

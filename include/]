@@ -1,0 +1,320 @@
+#include <string.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <math.h>
+#include "wave.h"
+
+
+// define ChunkID
+const char ID_RIFF[5] = "RIFF\0";
+const char ID_WAVE[5] = "WAVE\0";
+const char ID_FMT[5] = "fmt \0";
+const char ID_DATA[5] = "data\0";
+
+
+// moves file pointer to the start of the chunk.
+void wave_setReadingPoint(FILE *fp, const char *targeted_chunk_ID) {
+	char chunk_ID[5] = {};
+	uint32_t chunk_size = 0;
+
+	while(fread(chunk_ID, 1, 4, fp)) {
+		// if the point is not the start of the target chunk, moves reading point to the next chunk.
+		if(strncmp(chunk_ID, targeted_chunk_ID, 4) != 0) {
+			fread(&chunk_size, 4, 1, fp);
+			fseek(fp, chunk_size, SEEK_CUR);
+		// if the point is the start of the target chunk, finish this function.
+		} else {
+			break;
+		}
+	}
+}
+
+
+// read RIFF chunk
+void wave_readRiffChunk(FILE *fp, WAVE_FORMAT *wave_format) {
+	// read RIFF chunk
+	wave_setReadingPoint(fp, ID_RIFF);
+	strcpy(wave_format->riffChunk.chunkID, ID_RIFF);
+	fread(&wave_format->riffChunk.chunkSize, 4, 1, fp);
+	fread(wave_format->riffChunk.chunkFormType, 1, 4, fp);
+}
+
+
+// read fmt chunk
+void wave_readFmtChunk(FILE *fp, WAVE_FORMAT *wave_format) {
+	// read fmt chunk
+	fseek(fp, 12, SEEK_SET);
+	wave_setReadingPoint(fp, ID_FMT);
+	strcpy(wave_format->fmtChunk.chunkID, ID_FMT);
+	fread(&wave_format->fmtChunk.chunkSize, 4, 1, fp);
+	fread(&wave_format->fmtChunk.audioFormat, 2, 1, fp);
+	fread(&wave_format->fmtChunk.numChannels, 2, 1, fp);
+	fread(&wave_format->fmtChunk.sampleRate, 4, 1, fp);
+	fread(&wave_format->fmtChunk.byteRate, 4, 1, fp);
+	fread(&wave_format->fmtChunk.blockAlign, 2, 1, fp);
+	fread(&wave_format->fmtChunk.bitsPerSample, 2, 1, fp);
+}
+
+
+long wave_getGround(bytes_per_sample) {
+	int64_t ground;
+
+	switch(bytes_per_sample) {
+		case 1:
+		ground = 
+			break;
+		case 2:
+			break;
+		case 4:
+			break;
+		case 8:
+			break;
+		default:
+			printf("wave_readSoundData : unsupported bytes_per_sample\n");
+			return NULL;
+	}
+
+	return ground;
+}
+
+
+float *wave_readSoundData1Byte() {
+}
+
+float *wave_readSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format) {
+	int16_t data;
+
+	long num_samples = wave_format->dataChunk.chunkSize / bytes_per_sample;
+	float *s = calloc(num_samples, sizeof(float));
+
+	for(int i = 0; i < num_samples; i++) {
+		fread(&data, bytes_per_sample, 1, fp);
+		s[i] = (float) (data / 32767);
+	}
+
+	return s;
+}
+
+
+float *wave_readSoundData(FILE *fp, WAVE_FORMAT *wave_format) {
+	short bytes_per_sample = (wave_format->fmtChunk.bitsPerSample / 8);
+	/*
+	long num_samples = wave_format->dataChunk.chunkSize / bytes_per_sample;
+
+	s = calloc(num_samples, sizeof(float));
+	void *datav = malloc(bytes_per_sample);
+	long datal = 0;
+
+
+	for(int i = 0; i < num_samples; i++) {
+		fread(data, bytes_per_sample, 1, fp);
+		s[i] = (float) (*data / GROUND);
+	}
+	*/
+
+	switch(bytes_per_sample) {
+		case 1:
+			break;
+		case 2:
+			break;
+		case 4:
+			break;
+		case 8:
+			break;
+		default:
+			printf("wave_readSoundData : unsupported bytes_per_sample\n");
+			return NULL;
+	}
+
+	return s;
+}
+
+
+// read data chunk
+float *wave_readDataChunk(FILE *fp, WAVE_FORMAT *wave_format) {
+	float *s;
+
+	// read data chunk
+	fseek(fp, 12, SEEK_SET);
+	wave_setReadingPoint(fp, ID_DATA);
+	strcpy(wave_format->dataChunk.chunkID, ID_DATA);
+	fread(&wave_format->dataChunk.chunkSize, 4, 1, fp);
+
+	// read sound data;
+	s = wave_readSoundData(f@, wave_format);
+
+	return s;
+}
+
+
+void wave_applyComp(COMPRESSOR *comp, float *s, int start_point, int end_point, float cur_vol) {
+	float amp;
+
+	amp = (cur_vol - comp->threshold) * comp->ratio + comp->threshold;
+	printf("amp : %f\n", amp);
+	for(int i = start_point; i < end_point + 1; i++) {
+		s[i] = s[i] / cur_vol * amp;
+	}
+}
+
+
+float wave_calcRms(float *s, int start_point, int end_point) {
+	float sum = 0;
+	float rms;
+
+	for(int i = start_point; i < end_point + 1; i++) {
+		sum += fabsf(s[i]);
+	}
+	rms = sum / (end_point - start_point + 1);
+	printf("start : %d	end : %d	rms : %f\n", start_point, end_point, rms);
+
+	return rms;
+}
+
+
+float wave_getMinRms(WAVE_FORMAT *wave_format, COMPRESSOR *comp, float *s) {
+	int window_start_point = 0;
+	int window_end_point = 0;
+	float rms = 0;
+	float min_rms = 1.0;
+
+	for(window_start_point = 0; window_start_point < wave_format->dataChunk.chunkSize; window_start_point += comp->windowSize) {
+		window_end_point = (window_start_point + comp->windowSize < wave_format->dataChunk.chunkSize - 1) ? window_end_point + comp->windowSize : wave_format->dataChunk.chunkSize - 1;
+		rms = wave_calcRms(s, window_start_point, window_end_point);
+		if(rms < min_rms) {
+			min_rms = rms;
+		}
+	}
+
+	return min_rms;
+}
+
+
+float wave_getMaxRms(WAVE_FORMAT *wave_format, COMPRESSOR *comp, float *s) {
+	int window_start_point = 0;
+	int window_end_point = 0;
+	float rms = 0;
+	float max_rms = 0;
+
+	for(window_start_point = 0; window_start_point < wave_format->dataChunk.chunkSize; window_start_point += comp->windowSize) {
+		window_end_point = (window_start_point + comp->windowSize < wave_format->dataChunk.chunkSize - 1) ? window_end_point + comp->windowSize : wave_format->dataChunk.chunkSize - 1;
+		rms = wave_calcRms(s, window_start_point, window_end_point);
+		if(rms > max_rms) {
+			max_rms = rms;
+		}
+	}
+
+	return max_rms;
+}
+
+
+void wave_peakComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, float *s) {
+}
+
+
+void wave_rmsComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, float *s) {
+	int window_start_point = 0;
+	int window_end_point = 0;
+	float rms = 0;
+	int cnt = 0;
+
+	for(window_start_point = 0; window_start_point < wave_format->dataChunk.chunkSize; window_start_point += comp->windowSize) {
+		cnt++;
+		window_end_point = (window_start_point + comp->windowSize < wave_format->dataChunk.chunkSize - 1) ? window_end_point + comp->windowSize : wave_format->dataChunk.chunkSize - 1;
+		rms = wave_calcRms(s, window_start_point, window_end_point);
+
+		if(rms > comp->threshold) {
+			wave_applyComp(comp, s, window_start_point, window_end_point, rms);
+		}
+	}
+
+	printf("window size : %d\n", comp->windowSize);
+	printf("cnt : %d\n", cnt);
+}
+
+
+void wave_writeSoundData(FILE *fp, WAVE_FORMAT *wave_format, float *s) {
+	float dataf;
+	short bytes_per_sample = (wave_format->fmtChunk.bitsPerSample / 8);
+	long num_samples = wave_format->dataChunk.chunkSize / bytes_per_sample;
+
+	void *datav = malloc(bytes_per_sample);
+	int *datai;
+
+	for(int i = 0; i < num_samples; i++) {
+		//printf("i : %6d	data : %f\n", i, s[i]);
+		dataf = ((s[i] + 1.0) / 2) * (MAX - 1);
+		if(dataf > MAX - 1) {
+			printf("error : wave_writeSoundData\n positive over flow\n");
+			printf("%f\n", dataf);
+			exit(1);
+		}
+		else if(dataf < MIN) {
+			printf("error : wave_writeSoundData\n negative over flow\n");
+			printf("%f\n", dataf);
+			exit(1);
+		} else {
+		*datai = (int)(dataf + 0.5) - GROUND;
+		fwrite(datai, bytes_per_sample, 1, fp);
+		}
+	}
+}
+
+
+void wave_writeWavFile(WAVE_FORMAT *wave_format, float *s, char *file_name) {
+	FILE *fp;
+
+	fp = fopen(file_name, "wb");
+
+	if(!fp) {
+		printf("file open error\n");
+		exit(1);
+	}
+
+	// RIFF chunk
+	fwrite(wave_format->riffChunk.chunkID, 1, 4, fp);
+	fwrite(&wave_format->riffChunk.chunkSize, 4, 1, fp);
+	fwrite(wave_format->riffChunk.chunkFormType, 1, 4, fp);
+
+	// fmt chunk
+	wave_format->fmtChunk.chunkSize = 16;
+	fwrite(wave_format->fmtChunk.chunkID, 1, 4, fp);
+	fwrite(&wave_format->fmtChunk.chunkSize, 4, 1, fp);
+	fwrite(&wave_format->fmtChunk.audioFormat, 2, 1, fp);
+	fwrite(&wave_format->fmtChunk.numChannels, 2, 1, fp);
+	fwrite(&wave_format->fmtChunk.sampleRate, 4, 1, fp);
+	fwrite(&wave_format->fmtChunk.byteRate, 4, 1, fp);
+	fwrite(&wave_format->fmtChunk.blockAlign, 2, 1, fp);
+	fwrite(&wave_format->fmtChunk.bitsPerSample, 2, 1, fp);
+
+	//data chunk
+	fwrite(wave_format->dataChunk.chunkID, 1, 4, fp);
+	fwrite(&wave_format->dataChunk.chunkSize, 4, 1, fp);
+	wave_writeSoundData(fp, wave_format, s);
+
+	fclose(fp);
+}
+
+
+//	print header information
+void wave_printWaveFormatInfo(WAVE_FORMAT *wave_format) {
+	printf("/*   RiffChunk   */");
+	printf("\nriffChunk.chunkID : %s", wave_format->riffChunk.chunkID);
+	printf("\nchunkSize\n : %ld", wave_format->riffChunk.chunkSize);
+	printf("\nchunkFormType : %s", wave_format->riffChunk.chunkFormType);
+
+	printf("\n\n/*  fmtChunk	 */");
+	printf("\nchunk_ID : %s", wave_format->fmtChunk.chunkID);
+	printf("\nchunkSize : %ld", wave_format->fmtChunk.chunkSize);
+	printf("\naudioFormat : %d", wave_format->fmtChunk.audioFormat);
+	printf("\nnumChannels : %d", wave_format->fmtChunk.numChannels);
+	printf("\nsampleRate : %ld", wave_format->fmtChunk.sampleRate);
+	printf("\nbyteRate : %ld", wave_format->fmtChunk.byteRate);
+	printf("\nblockAlign : %d", wave_format->fmtChunk.blockAlign);
+	printf("\nbitsPerSample : %d", wave_format->fmtChunk.bitsPerSample);
+
+	printf("\n\n/*   dataChunk   */");
+	printf("\nchunk_ID : %s", wave_format->dataChunk.chunkID);
+	printf("\nchunkSize : %ld\n", wave_format->dataChunk.chunkSize);
+}
