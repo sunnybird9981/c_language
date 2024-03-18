@@ -150,7 +150,7 @@ double wave_calcRms(double *s, int start_pos, int end_pos) {
 	double rms;
 
 	for(int i = start_pos; i < end_pos + 1; i++) {
-		sum += fabsf(s[i]);
+		sum += fabs(s[i]);
 	}
 	rms = sum / (end_pos - start_pos + 1);
 
@@ -220,7 +220,7 @@ double wave_getMaxAbsValue(SOUND_DATA *sound_data) {
 
 	int i;
 	for(i = 0; i < sound_data->num_samples; i++) {
-		abs_value = fabsf(sound_data->s[i]);
+		abs_value = fabs(sound_data->s[i]);
 		if(abs_value > max_abs_value) {
 			max_abs_value = abs_value;
 		}
