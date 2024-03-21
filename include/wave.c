@@ -11,6 +11,7 @@ const char ID_RIFF[5] = "RIFF\0";
 const char ID_WAVE[5] = "WAVE\0";
 const char ID_FMT[5] = "fmt \0";
 const char ID_DATA[5] = "data\0";
+double curGainLevel = 1.0;
 
 
 // moves file pointer to the start of the chunk.
@@ -43,8 +44,7 @@ void wave_readRiffChunk(FILE *fp, RIFF_CHUNK *riff_chunk) {
 
 // read fmt chunk
 void wave_readFmtChunk(FILE *fp, FMT_CHUNK *fmt_chunk) {
-	// read fmt chunk
-	fseek(fp, 12, SEEK_SET);
+	fseek(fp, 12, SEEK_SET); // skip riff Chunk
 	wave_setReadingPoint(fp, ID_FMT);
 	strcpy(fmt_chunk->chunkID, ID_FMT);
 	fread(&fmt_chunk->chunkSize, 4, 1, fp);
@@ -66,10 +66,10 @@ void wave_getDataRange(SOUND_DATA *sound_data, short bytes_per_sample) {
 
 void wave_readSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	uint8_t data;
-	sound_data->num_samples = wave_format->dataChunk.chunkSize / 1;
-	sound_data->s = calloc(sound_data->num_samples, sizeof(double));
+	sound_data->numSamples = wave_format->dataChunk.chunkSize / 1;
+	sound_data->s = calloc(sound_data->numSamples, sizeof(double));
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		fread(&data, 1, 1, fp);
 		sound_data->s[i] = (double)data / (double)sound_data->ground;
 	}
@@ -78,10 +78,10 @@ void wave_readSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sou
 
 void wave_readSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int16_t data;
-	sound_data->num_samples = wave_format->dataChunk.chunkSize / 2;
-	sound_data->s = calloc(sound_data->num_samples, sizeof(double));
+	sound_data->numSamples = wave_format->dataChunk.chunkSize / 2;
+	sound_data->s = calloc(sound_data->numSamples, sizeof(double));
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		fread(&data, 2, 1, fp);
 		sound_data->s[i] = (double)data / (double)sound_data->ground;
 	}
@@ -90,10 +90,10 @@ void wave_readSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sou
 
 void wave_readSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int32_t data;
-	sound_data->num_samples = wave_format->dataChunk.chunkSize / 4;
-	sound_data->s = calloc(sound_data->num_samples, sizeof(double));
+	sound_data->numSamples = wave_format->dataChunk.chunkSize / 4;
+	sound_data->s = calloc(sound_data->numSamples, sizeof(double));
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		fread(&data, 4, 1, fp);
 		sound_data->s[i] = (double)data / (double)sound_data->ground;
 	}
@@ -123,8 +123,7 @@ void wave_readSoundData(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_da
 
 // read data chunk
 void wave_readDataChunk(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
-	// read data chunk
-	fseek(fp, 12, SEEK_SET);
+	fseek(fp, 12, SEEK_SET); // skip riff chunk
 	wave_setReadingPoint(fp, ID_DATA);
 	strcpy(wave_format->dataChunk.chunkID, ID_DATA);
 	fread(&wave_format->dataChunk.chunkSize, 4, 1, fp);
@@ -134,13 +133,38 @@ void wave_readDataChunk(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_da
 }
 
 
-void wave_applyComp(COMPRESSOR *comp, double *s, int start_pos, int end_pos, double cur_vol) {
-	double amp;
+void wave_decGainLevel(float ratio, double change_rate) {
+	double tmp_gain_level_value;
 
-	amp = (cur_vol - comp->threshold) * comp->ratio + comp->threshold;
-	printf("amp : %f\n", amp);
-	for(int i = start_pos; i < end_pos + 1; i++) {
-		s[i] = s[i] / cur_vol * amp;
+	tmp_gain_level_value = curGainLevel - (double)change_rate;
+	curGainLevel = tmp_gain_level_value > ratio ? tmp_gain_level_value : ratio;
+}
+
+
+void wave_incGainLevel(float change_rate) {
+	double tmp_gain_level_value;
+
+	tmp_gain_level_value = curGainLevel + (double)change_rate;
+	curGainLevel = tmp_gain_level_value < 1.0 ? tmp_gain_level_value : 1.0;
+}
+
+
+void wave_setGainLevel(float threshold, float ratio, double cur_vol, float gain_level_change_rate_attack, float gain_level_change_rate_release) {
+
+	if(cur_vol > threshold && curGainLevel > ratio) {
+		wave_decGainLevel(ratio, gain_level_change_rate_attack);
+	} else if(cur_vol < threshold && curGainLevel < 1.0){
+		wave_incGainLevel(gain_level_change_rate_release);
+	}
+}
+
+
+void wave_applyComp(double *s, int start_pos, int end_pos, double threshold, double cur_vol_level) {
+
+	if(curGainLevel < 1.0) {
+		for(int i = start_pos; i < end_pos + 1; i++) {
+			s[i] *= curGainLevel;
+		}
 	}
 }
 
@@ -164,8 +188,8 @@ double wave_getMinRms(SOUND_DATA *sound_data, int window_size) {
 	double rms = 0;
 	double min_rms = 1.0;
 
-	for(window_start_pos = 0; window_start_pos < sound_data->num_samples; window_start_pos += window_size) {
-		window_end_pos = (window_start_pos + window_size < sound_data->num_samples - 1) ? window_end_pos + window_size : sound_data->num_samples;
+	for(window_start_pos = 0; window_start_pos < sound_data->numSamples; window_start_pos += window_size) {
+		window_end_pos = (window_start_pos + window_size < sound_data->numSamples - 1) ? window_end_pos + window_size : sound_data->numSamples;
 		rms = wave_calcRms(sound_data->s, window_start_pos, window_end_pos);
 		if(rms < min_rms) {
 			min_rms = rms;
@@ -182,8 +206,10 @@ double wave_getMaxRms(SOUND_DATA *sound_data, int window_size) {
 	double rms = 0;
 	double max_rms = 0;
 
-	for(window_start_pos = 0; window_start_pos < sound_data->num_samples; window_start_pos += window_size) {
-		window_end_pos = (window_start_pos + window_size < sound_data->num_samples - 1) ? window_end_pos + window_size : sound_data->num_samples - 1;
+	for(window_start_pos = 0; window_start_pos < sound_data->numSamples; window_start_pos += window_size) {
+		window_end_pos =
+		(window_start_pos + window_size < sound_data->numSamples - 1)
+		? window_end_pos + window_size : sound_data->numSamples - 1;
 		rms = wave_calcRms(sound_data->s, window_start_pos, window_end_pos);
 		if(rms > max_rms) {
 			max_rms = rms;
@@ -194,22 +220,29 @@ double wave_getMaxRms(SOUND_DATA *sound_data, int window_size) {
 }
 
 
-void wave_peakComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, double *s) {
+void wave_peakComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, SOUND_DATA *sound_data) {
 }
 
 
-void wave_rmsComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, double *s) {
+void wave_rmsComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, SOUND_DATA *sound_data) {
 	int window_start_pos = 0;
 	int window_end_pos = 0;
+	int samples_per_window = 0;
 	double rms = 0;
+	double gain_level_change_rate_attack, gain_level_change_rate_release;
 
-	for(window_start_pos = 0; window_start_pos < wave_format->dataChunk.chunkSize; window_start_pos += comp->windowSize) {
-		window_end_pos = (window_start_pos + comp->windowSize < wave_format->dataChunk.chunkSize - 1) ? window_end_pos + comp->windowSize : wave_format->dataChunk.chunkSize - 1;
-		rms = wave_calcRms(s, window_start_pos, window_end_pos);
+	samples_per_window = (int) (wave_format->fmtChunk.sampleRate * wave_format->fmtChunk.numChannels * comp->timeFrame);
+	gain_level_change_rate_attack = (double)(1.0 - comp->ratio) / (comp->attack / comp->timeFrame);
+	gain_level_change_rate_release = (double)(1.0 - comp->ratio) / (comp->release / comp->timeFrame);
 
-		if(rms > comp->threshold) {
-			wave_applyComp(comp, s, window_start_pos, window_end_pos, rms);
-		}
+	for(window_start_pos = 0; window_start_pos < sound_data->numSamples; window_start_pos += samples_per_window) {
+		window_end_pos =
+		window_start_pos + samples_per_window - 1 < sound_data->numSamples - 1
+		? window_start_pos + samples_per_window - 1 : sound_data->numSamples - 1;
+
+		rms = wave_calcRms(sound_data->s, window_start_pos, window_end_pos);
+		wave_setGainLevel(comp->threshold, comp->ratio, rms, gain_level_change_rate_attack, gain_level_change_rate_release);
+		wave_applyComp(sound_data->s, window_start_pos, window_end_pos, (double)comp->threshold, rms);
 	}
 }
 
@@ -219,7 +252,7 @@ double wave_getMaxAbsValue(SOUND_DATA *sound_data) {
 	double max_abs_value = 0;
 
 	int i;
-	for(i = 0; i < sound_data->num_samples; i++) {
+	for(i = 0; i < sound_data->numSamples; i++) {
 		abs_value = fabs(sound_data->s[i]);
 		if(abs_value > max_abs_value) {
 			max_abs_value = abs_value;
@@ -232,7 +265,7 @@ double wave_getMaxAbsValue(SOUND_DATA *sound_data) {
 
 void wave_multSoundData(SOUND_DATA *sound_data, double mult) {
 	int i;
-	for(i = 0; i < sound_data->num_samples; i++) {
+	for(i = 0; i < sound_data->numSamples; i++) {
 		sound_data->s[i] *= mult;
 	}
 }
@@ -241,14 +274,14 @@ void wave_multSoundData(SOUND_DATA *sound_data, double mult) {
 void wave_adjustSoundData(SOUND_DATA *sound_data, int window_size, double target_level) {
 	double max_abs_value = 0;
 	double max_rms = 0;
-	double amp = 0;
+	double gain_level = 0;
 
 	max_abs_value = wave_getMaxAbsValue(sound_data);
 	max_rms = wave_getMaxRms(sound_data, window_size);
 
-	amp = 1.0 / max_rms * target_level;
-	if(max_abs_value * amp < 1.0) {
-		wave_multSoundData(sound_data, amp);
+	gain_level = 1.0 / max_rms * target_level;
+	if(max_abs_value * gain_level < 1.0) {
+		wave_multSoundData(sound_data, gain_level);
 	} else {
 		printf("error : wave_adjustSoundData\namp is too large\n");
 		exit(0);
@@ -260,7 +293,7 @@ void wave_writeSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 	uint8_t datai;
 	double datalf;
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		datalf = ((sound_data->s[i] + 1.0) / 2) * (sound_data->max - 1);
 		if(datalf > sound_data->max - 1) {
 			printf("error : wave_writeSoundData1Byte\nnegative over flow\n");
@@ -281,14 +314,15 @@ void wave_writeSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 	int16_t datai;
 	double datalf;
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		datalf = ((sound_data->s[i] + 1.0) / 2) * (sound_data->max - 1);
 		if(datalf > sound_data->max - 1) {
 			printf("error : wave_writeSoundData2Byte\nnegative over flow\n");
+			printf("s[%d] : %lf\n", i, sound_data->s[i]);
 			exit(1);
 		}
 		else if(datalf < sound_data->min) {
-			printf("error : wave_writeSoundData1Byte\npositive over flow\n");
+			printf("error : wave_writeSoundData2Byte\npositive over flow\n");
 			exit(1);
 		} else {
 		datai = (int16_t)(datalf + 0.5) - sound_data->ground;
@@ -302,14 +336,14 @@ void wave_writeSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 	int32_t datai;
 	double datalf;
 
-	for(int i = 0; i < sound_data->num_samples; i++) {
+	for(int i = 0; i < sound_data->numSamples; i++) {
 		datalf = ((sound_data->s[i] + 1.0) / 2) * (sound_data->max - 1);
 		if(datalf > sound_data->max - 1) {
 			printf("error : wave_writeSoundData4Byte\nnegative over flow\n");
 			exit(1);
 		}
 		else if(datalf < sound_data->min) {
-			printf("error : wave_writeSoundData1Byte\npositive over flow\n");
+			printf("error : wave_writeSoundData4Byte\npositive over flow\n");
 			exit(1);
 		} else {
 		datai = (int32_t)(datalf + 0.5) - sound_data->ground;

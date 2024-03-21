@@ -14,11 +14,12 @@ extern const char ID_RIFF[5];
 extern const char ID_WAVE[5];
 extern const char ID_FMT[5];
 extern const char ID_DATA[5];
+extern double curGainLevel;
 
 // range of sound data value
 typedef struct {
 	double *s;
-	int num_samples;
+	int numSamples;
 	unsigned long ground;
 	unsigned long max;
 	short min;
@@ -57,11 +58,11 @@ typedef struct {
 } WAVE_FORMAT;
 
 typedef struct {
-	float threshold;
-	float ratio;
-	float attack;
-	float release;
-	int windowSize;
+	float threshold; // 0 ~ 1
+	float ratio; // 0 ~ 1
+	float attack; // sec
+	float release; // sec
+	float timeFrame; // how long a window is
 } COMPRESSOR;
 
 void wave_setReadingPoint(FILE *, const char *);
@@ -73,12 +74,14 @@ void wave_readSoundData2Byte(FILE *, WAVE_FORMAT *, SOUND_DATA *);
 void wave_readSoundData4Byte(FILE *, WAVE_FORMAT *, SOUND_DATA *);
 void wave_readSoundData(FILE *, WAVE_FORMAT *, SOUND_DATA *);
 void wave_readDataChunk(FILE *, WAVE_FORMAT *, SOUND_DATA *);
-void wave_applyComp(COMPRESSOR *, double *, int, int, double);
+void wave_decGainLevel(float, double);
+void wave_incGainLevel(float);
+void wave_applyComp(double *, int, int, double, double);
 double wave_calcRms(double *, int, int);
 double wave_getMinRms(SOUND_DATA *, int);
 double wave_getMaxRms(SOUND_DATA *, int);
-void wave_peakComp(WAVE_FORMAT *, COMPRESSOR *, double *);
-void wave_rmsComp(WAVE_FORMAT *, COMPRESSOR *, double *);
+void wave_peakComp(WAVE_FORMAT *, COMPRESSOR *, SOUND_DATA *);
+void wave_rmsComp(WAVE_FORMAT *, COMPRESSOR *, SOUND_DATA *);
 double wave_getMaxAbsValue(SOUND_DATA *);
 void wave_multSoundData(SOUND_DATA *, double);
 void wave_adjustSoundData(SOUND_DATA *, int, double);
