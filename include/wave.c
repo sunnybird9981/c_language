@@ -57,13 +57,15 @@ void wave_readFmtChunk(FILE *fp, FMT_CHUNK *fmt_chunk) {
 }
 
 
-void wave_getDataRange(SOUND_DATA *sound_data, short bytes_per_sample) {
-	sound_data->max = pow(2, bytes_per_sample);
+// set range of data value
+void wave_setSoundDataRange(SOUND_DATA *sound_data, short bits_per_sample) {
+	sound_data->max = pow(2, bits_per_sample);
 	sound_data->min = 0;
 	sound_data->ground = sound_data->max / 2;
 }
 
 
+// read sound data when wav file's bitsPerSample is 8bit
 void wave_readSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	uint8_t data;
 	sound_data->numSamples = wave_format->dataChunk.chunkSize / 1;
@@ -76,6 +78,7 @@ void wave_readSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sou
 }
 
 
+// read sound data when wav file's bitsPerSample is 16bit
 void wave_readSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int16_t data;
 	sound_data->numSamples = wave_format->dataChunk.chunkSize / 2;
@@ -88,6 +91,7 @@ void wave_readSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sou
 }
 
 
+// read sound data when wav file's bitsPerSample is 32bit
 void wave_readSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int32_t data;
 	sound_data->numSamples = wave_format->dataChunk.chunkSize / 4;
@@ -100,10 +104,11 @@ void wave_readSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sou
 }
 
 
+// read sound data in data chunk
 void wave_readSoundData(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	short bytes_per_sample = (wave_format->fmtChunk.bitsPerSample / 8);
 
-	wave_getDataRange(sound_data, wave_format->fmtChunk.bitsPerSample);
+	wave_setSoundDataRange(sound_data, wave_format->fmtChunk.bitsPerSample);
 	switch(bytes_per_sample) {
 		case 1:
 			wave_readSoundData1Byte(fp, wave_format, sound_data);
@@ -121,18 +126,26 @@ void wave_readSoundData(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_da
 }
 
 
-// read data chunk
-void wave_readDataChunk(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
+// read header information in data chunk
+void wave_readHeaderFromDataChunk(FILE *fp, WAVE_FORMAT *wave_format) {
 	fseek(fp, 12, SEEK_SET); // skip riff chunk
 	wave_setReadingPoint(fp, ID_DATA);
 	strcpy(wave_format->dataChunk.chunkID, ID_DATA);
 	fread(&wave_format->dataChunk.chunkSize, 4, 1, fp);
+}
+
+
+// read data chunk
+void wave_readDataChunk(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
+	// read header data
+	wave_readHeaderFromDataChunk(fp, wave_format);
 
 	// read sound data;
 	wave_readSoundData(fp, wave_format, sound_data);
 }
 
 
+// deceases gain during attack time
 void wave_decGainLevel(float ratio, double change_rate) {
 	double tmp_gain_level_value;
 
@@ -141,6 +154,7 @@ void wave_decGainLevel(float ratio, double change_rate) {
 }
 
 
+// increases gain during release time
 void wave_incGainLevel(float change_rate) {
 	double tmp_gain_level_value;
 
@@ -149,17 +163,19 @@ void wave_incGainLevel(float change_rate) {
 }
 
 
-void wave_setGainLevel(float threshold, float ratio, double cur_vol, float gain_level_change_rate_attack, float gain_level_change_rate_release) {
+// increases or decreases gain according to whether current volume is above threshold
+void wave_setGainLevel(COMPRESSOR *comp, double cur_vol, float gain_level_change_rate_attack, float gain_level_change_rate_release) {
 
-	if(cur_vol > threshold && curGainLevel > ratio) {
-		wave_decGainLevel(ratio, gain_level_change_rate_attack);
-	} else if(cur_vol < threshold && curGainLevel < 1.0){
+	if(cur_vol > comp->threshold && curGainLevel > comp->ratio) {
+		wave_decGainLevel(comp->ratio, gain_level_change_rate_attack);
+	} else if(cur_vol < comp->threshold && curGainLevel < 1.0){
 		wave_incGainLevel(gain_level_change_rate_release);
 	}
 }
 
 
-void wave_applyComp(double *s, int start_pos, int end_pos, double threshold, double cur_vol_level) {
+// apply compressor effect to sound data
+void wave_applyComp(double *s, int start_pos, int end_pos, double threshold) {
 
 	if(curGainLevel < 1.0) {
 		for(int i = start_pos; i < end_pos + 1; i++) {
@@ -169,6 +185,7 @@ void wave_applyComp(double *s, int start_pos, int end_pos, double threshold, dou
 }
 
 
+// calculate average of sound data value
 double wave_calcRms(double *s, int start_pos, int end_pos) {
 	double sum = 0;
 	double rms;
@@ -235,14 +252,15 @@ void wave_rmsComp(WAVE_FORMAT *wave_format, COMPRESSOR *comp, SOUND_DATA *sound_
 	gain_level_change_rate_attack = (double)(1.0 - comp->ratio) / (comp->attack / comp->timeFrame);
 	gain_level_change_rate_release = (double)(1.0 - comp->ratio) / (comp->release / comp->timeFrame);
 
+	/* split data by (samples_per_window), and apply compressor effect for each section */
 	for(window_start_pos = 0; window_start_pos < sound_data->numSamples; window_start_pos += samples_per_window) {
 		window_end_pos =
 		window_start_pos + samples_per_window - 1 < sound_data->numSamples - 1
 		? window_start_pos + samples_per_window - 1 : sound_data->numSamples - 1;
 
-		rms = wave_calcRms(sound_data->s, window_start_pos, window_end_pos);
-		wave_setGainLevel(comp->threshold, comp->ratio, rms, gain_level_change_rate_attack, gain_level_change_rate_release);
-		wave_applyComp(sound_data->s, window_start_pos, window_end_pos, (double)comp->threshold, rms);
+		rms = wave_calcRms(sound_data->s, window_start_pos, window_end_pos); // calculate rms in a member of this window
+		wave_setGainLevel(comp, rms, gain_level_change_rate_attack, gain_level_change_rate_release);
+		wave_applyComp(sound_data->s, window_start_pos, window_end_pos, (double)comp->threshold); // apply effect
 	}
 }
 
@@ -263,6 +281,7 @@ double wave_getMaxAbsValue(SOUND_DATA *sound_data) {
 }
 
 
+// multiply all sound data value by (mult)
 void wave_multSoundData(SOUND_DATA *sound_data, double mult) {
 	int i;
 	for(i = 0; i < sound_data->numSamples; i++) {
@@ -271,6 +290,7 @@ void wave_multSoundData(SOUND_DATA *sound_data, double mult) {
 }
 
 
+// multiply all sound data so that the maximum rms value is (target_level)
 void wave_adjustSoundData(SOUND_DATA *sound_data, int window_size, double target_level) {
 	double max_abs_value = 0;
 	double max_rms = 0;
@@ -289,6 +309,7 @@ void wave_adjustSoundData(SOUND_DATA *sound_data, int window_size, double target
 }
 
 
+// when bitsPerSample is 8bit
 void wave_writeSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	uint8_t datai;
 	double datalf;
@@ -310,15 +331,16 @@ void wave_writeSoundData1Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 }
 
 
+// when bitsPerSample is 16bit
 void wave_writeSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int16_t datai;
 	double datalf;
 
 	for(int i = 0; i < sound_data->numSamples; i++) {
+		//printf("%.6f\n", sound_data->s[i]);
 		datalf = ((sound_data->s[i] + 1.0) / 2) * (sound_data->max - 1);
 		if(datalf > sound_data->max - 1) {
 			printf("error : wave_writeSoundData2Byte\nnegative over flow\n");
-			printf("s[%d] : %lf\n", i, sound_data->s[i]);
 			exit(1);
 		}
 		else if(datalf < sound_data->min) {
@@ -332,6 +354,7 @@ void wave_writeSoundData2Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 }
 
 
+// when bitsPerSample is 32bit
 void wave_writeSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	int32_t datai;
 	double datalf;
@@ -353,6 +376,7 @@ void wave_writeSoundData4Byte(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *so
 }
 
 
+// write sound data in data chunk
 void wave_writeSoundData(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_data) {
 	short bytes_per_sample = (wave_format->fmtChunk.bitsPerSample / 8);
 
@@ -397,7 +421,35 @@ void wave_writeWavFile(FILE *fp, WAVE_FORMAT *wave_format, SOUND_DATA *sound_dat
 }
 
 
-//	print header information
+// write monaural wav file (bits per sample : 16bit)
+void wave_writeMonoWavFile(FILE *fp, int sample_rate, short bits_per_sample, SOUND_DATA *sound_data) {
+	WAVE_FORMAT wave_format = {0};
+
+	// RIFF chunk
+	strcpy(wave_format.riffChunk.chunkID, ID_RIFF);
+	wave_format.riffChunk.chunkSize = sound_data->numSamples * bits_per_sample / 8 + 36;
+	strcpy(wave_format.riffChunk.chunkFormType, ID_WAVE);
+
+	// fmt chunk
+	strcpy(wave_format.fmtChunk.chunkID, ID_FMT);
+	wave_format.fmtChunk.chunkSize = 16;
+	wave_format.fmtChunk.audioFormat = 1;
+	wave_format.fmtChunk.numChannels = 1;
+	wave_format.fmtChunk.sampleRate = sample_rate;
+	wave_format.fmtChunk.byteRate = sample_rate * bits_per_sample / 8;
+	wave_format.fmtChunk.blockAlign = bits_per_sample / 8;
+	wave_format.fmtChunk.bitsPerSample = bits_per_sample;
+
+	// data chunk
+	strcpy(wave_format.dataChunk.chunkID, ID_DATA);
+	wave_format.dataChunk.chunkSize = sound_data->numSamples * bits_per_sample / 8;
+
+	wave_setSoundDataRange(sound_data, bits_per_sample);
+	wave_writeWavFile(fp, &wave_format, sound_data);
+}
+
+
+//	print header(Riff, fmt, data chunks) information
 void wave_printWaveFormatInfo(WAVE_FORMAT *wave_format) {
 	printf("/*   RiffChunk   */");
 	printf("\nriffChunk.chunkID : %s", wave_format->riffChunk.chunkID);

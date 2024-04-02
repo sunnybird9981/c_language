@@ -2,11 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../include/wave.h"
-#include "../include/file.h"
 
 /* 
 	this program apply compressor effect to wav files
-	usage : program (input file) (output file) (threshold) (ratio) (attack time) (release time) (time_frame)
+	usage : compressor.out (input file) (output file) (threshold) (ratio) (attack time) (release time) (time_frame)
 	threshold : 0 ~ 1
 	ratio : 0 ~ 1
 	attack : (sec)
